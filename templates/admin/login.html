@@ -1,0 +1,50 @@
+{% extends "admin/login.html" %}
+{% load static %}
+
+{% block content %}
+
+{{ block.super }}
+
+<hr>
+
+<h3>Forgot Password (OTP)</h3>
+
+<input type="email" id="email" placeholder="Enter email">
+<button onclick="requestOTP()">Send OTP</button>
+
+<br><br>
+
+<input type="text" id="otp" placeholder="Enter OTP">
+<input type="password" id="new_password" placeholder="New Password">
+
+<button onclick="verifyOTP()">Reset Password</button>
+
+<script>
+function requestOTP() {
+    fetch('/api/admin-request-otp/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            email: document.getElementById('email').value
+        })
+    })
+    .then(res => res.json())
+    .then(data => alert(data.message || data.error));
+}
+
+function verifyOTP() {
+    fetch('/api/admin-verify-otp/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            email: document.getElementById('email').value,
+            otp: document.getElementById('otp').value,
+            new_password: document.getElementById('new_password').value
+        })
+    })
+    .then(res => res.json())
+    .then(data => alert(data.message || data.error));
+}
+</script>
+
+{% endblock %}

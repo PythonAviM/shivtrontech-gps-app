@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShivtronTech</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Poppins',sans-serif;}
+
+body{
+  background: radial-gradient(circle at top,#0a0f1f,#020617);
+  color:white;
+  overflow-x:hidden;
+}
+
+/* 🔥 FIXED BACKGROUND (NO CLICK BLOCK) */
+body::before,
+body::after{
+  pointer-events:none;
+}
+
+body::before{
+  content:"";
+  position:fixed;
+  width:500px;height:500px;
+  background:#3b82f6;
+  filter:blur(200px);
+  top:-100px;left:-100px;
+  opacity:0.3;
+}
+
+body::after{
+  content:"";
+  position:fixed;
+  width:400px;height:400px;
+  background:#6366f1;
+  filter:blur(180px);
+  bottom:-100px;right:-100px;
+  opacity:0.3;
+}
+
+/* HERO */
+.hero{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:80px 40px;
+  flex-wrap:wrap;
+  gap:30px;
+}
+
+.hero-text{max-width:500px;}
+
+.hero h1{font-size:50px;}
+.hero span{color:#38bdf8;}
+.desc{margin:15px 0;color:#94a3b8;}
+
+.device{
+  width:220px;height:220px;
+  background:rgba(15,23,42,0.6);
+  border-radius:20px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  backdrop-filter:blur(20px);
+  box-shadow:0 0 40px rgba(56,189,248,0.4);
+  animation:float 4s infinite;
+}
+
+@keyframes float{
+  0%{transform:translateY(0)}
+  50%{transform:translateY(-15px)}
+  100%{transform:translateY(0)}
+}
+
+/* BUTTON */
+.btn{
+  padding:12px 20px;
+  border-radius:10px;
+  border:none;
+  cursor:pointer;
+}
+.btn-primary{
+  background:linear-gradient(135deg,#3b82f6,#6366f1);
+  color:white;
+  box-shadow:0 0 25px rgba(59,130,246,0.6);
+}
+
+/* FACILITIES */
+.facilities{
+  text-align:center;
+  padding:100px 20px;
+  position:relative;
+  overflow:hidden;
+}
+
+.facilities h2{font-size:38px;}
+.facilities span{color:#38bdf8;}
+.sub{color:#94a3b8;margin-bottom:50px;}
+
+.lines{
+  position:absolute;
+  width:200%;
+  height:100%;
+  left:-50%;
+  background:repeating-linear-gradient(
+    to right,
+    transparent,
+    transparent 40px,
+    rgba(56,189,248,0.1) 41px
+  );
+  animation:moveLines 10s linear infinite;
+}
+
+@keyframes moveLines{
+  from{transform:translateX(0)}
+  to{transform:translateX(200px)}
+}
+
+.circle-wrapper{
+  position:relative;
+  z-index:1;
+  display:flex;
+  justify-content:center;
+  flex-wrap:wrap;
+  gap:25px;
+}
+
+.circle-card{
+  width:220px;
+  padding:20px;
+  border-radius:15px;
+  background:rgba(15,23,42,0.6);
+  backdrop-filter:blur(20px);
+}
+
+.circle{
+  width:70px;height:70px;
+  margin:auto;margin-bottom:15px;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:radial-gradient(circle,#3b82f6,#6366f1);
+  font-size:28px;
+}
+
+/* CONTACT */
+.container{
+  padding:60px 20px;
+  max-width:500px;
+  margin:auto;
+}
+
+.contact-title{text-align:center;}
+.deal-text{text-align:center;color:#38bdf8;margin-bottom:20px;}
+
+input,textarea{
+  width:100%;
+  margin-bottom:10px;
+  padding:12px;
+  border:none;
+  border-radius:8px;
+  background:rgba(15,23,42,0.6);
+  color:white;
+}
+
+.btn-center{
+  display:flex;
+  justify-content:center;
+}
+
+.btn-center .btn{
+  width:60%;
+}
+
+/* ✅ WHATSAPP FIXED */
+.whatsapp{
+  position:fixed;
+  bottom:20px;
+  right:20px;
+  background:#25D366;
+  color:white;
+  padding:15px 18px;
+  border-radius:50%;
+  font-size:22px;
+  text-decoration:none;
+  z-index:9999; /* 🔥 IMPORTANT */
+}
+
+/* RESPONSIVE */
+@media(max-width:768px){
+  .hero{flex-direction:column;text-align:center;}
+  .hero h1{font-size:32px;}
+  .circle-card{width:45%;}
+  .btn-center .btn{width:100%;}
+}
+@media(max-width:480px){
+  .circle-card{width:100%;}
+  .hero h1{font-size:26px;}
+}
+</style>
+</head>
+
+<body>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-text">
+    <h1>Smart Tracking.<br><span>Stronger Security.</span></h1>
+    <p class="desc">Advanced GPS Tracker with real-time monitoring.</p>
+    <button class="btn btn-primary">Explore IP01</button>
+  </div>
+
+  <div class="device">
+    <h2>IP01</h2>
+    <p>GPS TRACKER</p>
+  </div>
+</section>
+
+<!-- FACILITIES -->
+<section class="facilities">
+  <div class="lines"></div>
+
+  <h2>Why Choose <span>ShivtronTech</span></h2>
+  <p class="sub">Powerful features designed for growth</p>
+
+  <div class="circle-wrapper">
+   
+    <div class="circle-card">
+      <div class="circle">📱</div>
+      <h3>Android App</h3>
+      <p>Fully encrypted system to keep your data safe & secure</p>
+    </div>
+    
+    <div class="circle-card">
+      <div class="circle">📶</div>
+      <h3>4G Support</h3>
+      <p>Works best with Airtel 4G SIM for stable connectivity</p>
+    </div>
+    
+    <div class="circle-card">
+      <div class="circle">🇮🇳</div>
+      <h3>All India</h3>
+      <p>Real-time GPS tracking (not cellular based) for high accuracy</p>
+    </div>
+    
+    <div class="circle-card">
+      <div class="circle">📈</div>
+      <h3>Growth</h3>
+      <p>High profit business model with scalable opportunities</p>
+    </div>
+    
+    <div class="circle-card">
+      <div class="circle">⏰</div>
+      <h3>24/7 Support</h3>
+      <p>Dedicated support team available anytime for assistance</p>
+    </div>
+    
+    <div class="circle-card">
+      <div class="circle">🔒</div>
+      <h3>Secure</h3>
+      <p>All user data is fully encrypted & protected end-to-end</p>
+    </div>
+  </div>
+</section>
+
+<!-- CONTACT -->
+<div class="container">
+  <h2 class="contact-title">Contact Us</h2>
+  <p class="deal-text">🚀 Dealership Facility is also Available</p>
+
+  
+  {% if success %}
+   <p class="text-success text-center">Message sent successfully</p> 
+  {% endif %} <form method="POST" class="col-md-6 mx-auto">
+  {% csrf_token %} 
+  <input class="form-control mb-2" name="name" placeholder="Name">
+  <input class="form-control mb-2" name="email" placeholder="Email">
+  <input class="form-control mb-2" name="phone" placeholder="Phone"> 
+  <textarea class="form-control mb-2" name="message" placeholder="Message">
+
+  </textarea> <button class="btn btn-primary w-100">Send</button> </form>
+</div>
+
+<!-- ✅ WORKING WHATSAPP -->
+<a href="https://wa.me/916306844234?text=Hi%20I%20am%20interested%20in%20GPS%20Tracker" target="_blank" class="whatsapp">💬</a>
+
+</body>
+</html>
+
+

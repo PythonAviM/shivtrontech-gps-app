@@ -1,0 +1,11 @@
+myenv/
+__pycache__/
+*.py[cod]
+*.log
+db.sqlite3
+staticfiles/
+.env
+service-account.json
+.vscode/
+.idea/
+

@@ -1,0 +1,1621 @@
+from django.utils import timezone
+from datetime import timedelta
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+from .models import UserProfile, EmailOTP
+from .utils import generate_otp, send_otp_email
+
+# views.py
+from rest_framework.permissions import IsAuthenticated
+from .models import Device
+from .models import (
+    SubscriptionPlan,
+    DeviceSubscription
+)
+from django.core.mail import send_mail
+from django.conf import settings
+import random
+from .models import OTP
+
+from .models import Device, DeviceData
+from datetime import datetime
+
+import razorpay
+
+from django.conf import settings
+
+client = razorpay.Client(
+    auth=(
+        settings.RAZORPAY_KEY_ID,
+        settings.RAZORPAY_KEY_SECRET
+    )
+)
+from rest_framework.permissions import IsAuthenticated
+# =====================================================
+# CHECK DEVICE SUBSCRIPTION
+# =====================================================
+
+def has_active_subscription(device):
+
+    sub = DeviceSubscription.objects.filter(
+
+        device=device,
+
+        is_active=True
+
+    ).last()
+
+    if not sub:
+        return False
+
+    remaining_days = (
+        sub.end_date - timezone.now()
+    ).days
+
+    return remaining_days > 0
+
+class SignupAPI(APIView):
+    def post(self, request):
+        name = request.data.get("name")
+        phone = request.data.get("phone")
+        email = request.data.get("email")
+        password = request.data.get("password")
+
+        if User.objects.filter(username=email).exists():
+            return Response({"error": "User exists"}, status=400)
+
+        user = User.objects.create_user(username=email, email=email, password=password)
+        UserProfile.objects.create(user=user, name=name, phone=phone)
+
+        return Response({"message": "User created"})
+
+class LoginAPI(APIView):
+    def post(self, request):
+        identifier = request.data.get("identifier")
+        password = request.data.get("password")
+
+        user = None
+        if "@" in identifier:
+            user = authenticate(username=identifier, password=password)
+        else:
+            try:
+                profile = UserProfile.objects.get(phone=identifier)
+                user = authenticate(username=profile.user.username, password=password)
+            except:
+                return Response({"error": "User not found"}, status=404)
+
+        if not user:
+            return Response({"error": "Invalid credentials"}, status=401)
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+        })
+
+class RequestOTP(APIView):
+    def post(self, request):
+        email = request.data.get("email")
+        user = User.objects.get(email=email)
+
+        EmailOTP.objects.filter(user=user).delete()
+        otp = generate_otp()
+        EmailOTP.objects.create(user=user, otp=otp)
+        send_otp_email(email, otp)
+
+        return Response({"message": "OTP sent"})
+
+
+from django.contrib.auth.models import User
+
+class VerifyOTP(APIView):
+    def post(self, request):
+        email = request.data.get("email")
+        otp = request.data.get("otp")
+        password = request.data.get("password")
+
+        user = User.objects.get(email=email)
+        otp_obj = EmailOTP.objects.filter(user=user, otp=otp).last()
+
+        if not otp_obj or otp_obj.is_expired():
+            return Response({"error": "Invalid/Expired OTP"}, status=400)
+
+        user.set_password(password)
+        user.save()
+        otp_obj.delete()
+
+        return Response({"message": "Password reset successful"})
+
+
+
+
+
+
+class AddDeviceAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        device_id = request.data.get("device_id")
+        name = request.data.get("name", "")
+
+        if Device.objects.filter(device_id=device_id).exists():
+            return Response({"error": "Device already exists"}, status=400)
+
+        device = Device.objects.create(
+            device_id=device_id,
+            user=request.user,
+            name=name
+        )
+
+        return Response({
+        "message": "Device added",
+        "device_id": device.device_id
+    })
+    
+
+
+# views.py
+
+class DeviceDataAPI(APIView):
+    def post(self, request):
+        device_id = request.data.get("device_id")
+
+        lat = request.data.get("lat")
+        lon = request.data.get("long")
+        speed = request.data.get("speed")
+        timestamp = request.data.get("timestamp")
+
+        if not device_id:
+            return Response({"error": "device_id required"}, status=400)
+
+        device = Device.objects.filter(device_id=device_id).first()
+
+        if not device:
+            return Response({"error": "Device not registered"}, status=404)
+
+        DeviceData.objects.create(
+            device=device,
+            latitude=lat,
+            longitude=lon,
+            speed=speed,
+            timestamp=timestamp
+        )
+
+        return Response({"message": "Data saved"})
+
+
+class MyDevicesAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        devices = Device.objects.filter(user=request.user)
+
+        data = []
+        for d in devices:
+            data.append({
+                "device_id": d.device_id,
+                "name": d.name,
+                "api_key": d.api_key
+            })
+
+        return Response(data)
+    
+
+
+
+
+class DeviceDataListAPI(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, device_id):
+
+        device = Device.objects.filter(
+
+            device_id=device_id,
+
+            user=request.user
+
+        ).first()
+
+        if not device:
+
+            return Response({
+
+                "error": "Not allowed"
+
+            }, status=403)
+
+        # ==========================================
+        # CHECK ACTIVE SUBSCRIPTION
+        # ==========================================
+
+        if not has_active_subscription(device):
+
+            return Response({
+
+                "error": "Plan expired"
+
+            }, status=403)
+
+        # ==========================================
+        # GET DATA
+        # ==========================================
+
+        data = DeviceData.objects.filter(
+            device=device
+        ).order_by('-timestamp')[:50]
+
+        result = []
+
+        for d in data:
+
+            result.append({
+
+                "lat": d.latitude,
+
+                "long": d.longitude,
+
+                "speed": d.speed,
+
+                "time": d.timestamp
+            })
+
+        return Response(result)
+  
+
+from datetime import datetime, timedelta
+from django.utils import timezone
+
+class SingleDeviceDataAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, device_id):
+
+        device = Device.objects.filter(
+            device_id=device_id,
+            user=request.user
+        ).first()
+
+        if not device:
+            return Response({"error": "Device not found"}, status=403)
+
+        # 🔥 query params
+        start_date = request.GET.get("start_date")
+        end_date = request.GET.get("end_date")
+        days = request.GET.get("days")
+
+        data_qs = DeviceData.objects.filter(device=device)
+
+        # ✅ CUSTOM DATE RANGE
+        if start_date and end_date:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+            end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+
+            data_qs = data_qs.filter(timestamp__range=(start, end))
+
+        # ✅ LAST X DAYS
+        elif days:
+            past_date = timezone.now() - timedelta(days=int(days))
+            data_qs = data_qs.filter(timestamp__gte=past_date)
+
+        # ✅ DEFAULT → LAST 90 DAYS
+        else:
+            past_date = timezone.now() - timedelta(days=90)
+            data_qs = data_qs.filter(timestamp__gte=past_date)
+
+        # 🔥 ORDER
+        data_qs = data_qs.order_by('-timestamp')
+
+        result = []
+        for d in data_qs:
+            result.append({
+                "lat": d.latitude,
+                "long": d.longitude,
+                "speed": d.speed,
+                "time": d.timestamp
+            })
+
+        return Response({
+            "device_id": device.device_id,
+            "data": result
+        })
+
+class LatestLocationAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, device_id):
+        device = Device.objects.filter(
+            device_id=device_id,
+            user=request.user
+        ).first()
+
+        if not device:
+            return Response({"error": "Not allowed"}, status=403)
+
+        data = DeviceData.objects.filter(device=device).order_by('-timestamp').first()
+
+        if not data:
+            return Response({"error": "No data"}, status=404)
+
+        return Response({
+            "lat": data.latitude,
+            "long": data.longitude,
+            "speed": data.speed,
+            "time": data.timestamp
+        })
+    
+
+
+class AdminRequestOTP(APIView):
+    def post(self, request):
+        email = request.data.get("email")
+
+        user = User.objects.filter(email=email, is_staff=True).first()
+        if not user:
+            return Response({"error": "Admin not found"}, status=404)
+
+        otp = str(random.randint(100000, 999999))
+
+        OTP.objects.update_or_create(
+            email=email,
+            defaults={"otp": otp}
+        )
+
+        send_mail(
+            "Admin OTP",
+            f"Your OTP is {otp}",
+            settings.EMAIL_HOST_USER,
+            [email]
+        )
+
+        return Response({"message": "OTP sent"})
+
+
+from django.utils import timezone
+from datetime import timedelta
+
+class AdminVerifyOTP(APIView):
+    def post(self, request):
+        email = request.data.get("email")
+        otp = request.data.get("otp")
+        new_password = request.data.get("new_password")
+
+        user = User.objects.filter(email=email, is_staff=True).first()
+        if not user:
+            return Response({"error": "Admin not found"}, status=404)
+
+        otp_obj = OTP.objects.filter(email=email).first()
+
+        if not otp_obj or otp_obj.otp != str(otp):
+            return Response({"error": "Invalid OTP"}, status=400)
+
+        user.set_password(new_password)
+        user.save()
+
+        otp_obj.delete()
+
+        return Response({"message": "Password reset successful"})
+    
+
+
+# accounts/views.py
+
+from django.shortcuts import render
+from .models import Contact
+
+def home(request):
+    if request.method == "POST":
+        Contact.objects.create(
+            name=request.POST.get("name"),
+            email=request.POST.get("email"),
+            phone=request.POST.get("phone"),
+            message=request.POST.get("message"),
+        )
+        return render(request, "home.html", {"success": True})
+
+    return render(request, "home.html")
+
+
+
+
+
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
+import json
+
+from .models import Device, DeviceData, Geofence, UserFCMToken
+from .utils import send_fcm_v1
+
+from math import radians, cos, sin, asin, sqrt
+
+# 🔥 distance function
+def calculate_distance(lat1, lon1, lat2, lon2):
+    lon1, lat1, lon2, lat2 = map(radians,
+        [lon1, lat1, lon2, lat2])
+
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+
+    a = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
+    c = 2 * asin(sqrt(a))
+
+    return 6371 * c * 1000  # meters
+
+
+@csrf_exempt
+def upload_location(request):
+
+    if request.method == "POST":
+
+        try:
+
+            data = json.loads(request.body.decode())
+
+        except:
+
+            return JsonResponse(
+                {
+                    'status': 'error',
+                    'message': 'Invalid JSON'
+                },
+                status=400
+            )
+
+    else:
+
+        data = request.GET
+
+    device_id = data.get('device_id')
+
+    latitude = data.get('latitude')
+
+    longitude = data.get('longitude')
+
+    speed = data.get('speed') or 0
+
+    if not device_id or not latitude or not longitude:
+
+        return JsonResponse(
+            {
+                'status': 'error',
+                'message': 'Missing fields'
+            },
+            status=400
+        )
+
+    # =====================================================
+    # DEVICE CHECK
+    # =====================================================
+
+    device = Device.objects.filter(
+        device_id=device_id
+    ).first()
+
+    if not device:
+
+        return JsonResponse(
+            {
+                'status': 'error',
+                'message': 'Device not registered'
+            },
+            status=404
+        )
+
+    # =====================================================
+    # SAVE LOCATION
+    # =====================================================
+
+    DeviceData.objects.create(
+
+        device=device,
+
+        latitude=latitude,
+
+        longitude=longitude,
+
+        speed=speed,
+
+        timestamp=timezone.now()
+    )
+
+    # =====================================================
+    # SUBSCRIPTION EXPIRY NOTIFICATION
+    # =====================================================
+
+    try:
+
+        subscription = DeviceSubscription.objects.get(
+
+            device=device,
+
+            active=True
+        )
+
+        send_expiry_notification(
+            subscription
+        )
+
+    except Exception as e:
+
+        print(
+            "SUBSCRIPTION ERROR:",
+            str(e)
+        )
+
+    # =====================================================
+    # GEOFENCE CHECK
+    # =====================================================
+
+    try:
+
+        geofence = Geofence.objects.filter(
+            device=device
+        ).order_by('-id').first()
+
+        print(
+            "👉 GEOFENCE ID =>",
+            geofence.id if geofence else None
+        )
+
+        print(
+            "👉 NOTIFICATION STATUS =>",
+            geofence.notification_enabled if geofence else None
+        )
+
+        # =================================================
+        # NO GEOFENCE
+        # =================================================
+
+        if not geofence:
+
+            return JsonResponse({
+                'status': 'success'
+            })
+
+        # =================================================
+        # NOTIFICATION BLOCKED
+        # =================================================
+
+        if geofence.notification_enabled is not True:
+
+            print("🚫 NOTIFICATION BLOCKED")
+
+            return JsonResponse({
+                'status': 'blocked'
+            })
+
+        # =================================================
+        # DISTANCE CALCULATION
+        # =================================================
+
+        dist = calculate_distance(
+
+            float(latitude),
+
+            float(longitude),
+
+            geofence.latitude,
+
+            geofence.longitude
+        )
+
+        print("DISTANCE =>", dist)
+
+        # =================================================
+        # OUTSIDE GEOFENCE
+        # =================================================
+
+        if dist > geofence.radius:
+
+            print("🚨 OUTSIDE GEOFENCE")
+
+            tokens = UserFCMToken.objects.filter(
+                user=device.user
+            )
+
+            for t in tokens:
+
+                send_fcm_v1(
+
+                    t.token,
+
+                    "🚨 Geofence Alert",
+
+                    f"{device.device_id} is OUTSIDE geofence!"
+                )
+
+    except Exception as e:
+
+        print(
+            "❌ GEOFENCE ERROR:",
+            str(e)
+        )
+
+    return JsonResponse({
+
+        'status': 'success',
+
+        'message': 'Location saved'
+    })
+
+
+
+# =========================================================
+# USER DEVICES API
+# =========================================================
+
+class UserDevicesAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        devices = Device.objects.filter(user=request.user)
+
+        data = []
+        for d in devices:
+            data.append({
+                "device_id": d.device_id,
+                "name": d.name
+            })
+
+        return Response({
+            "user": request.user.username,
+            "devices": data
+        })
+    
+
+
+
+
+    
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.tokens import RefreshToken
+
+class LogoutAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get("refresh")
+
+        if not refresh_token:
+            return Response({"error": "Refresh token required"}, status=400)
+
+        try:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            return Response({"message": "Logged out successfully"})
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+
+
+
+
+
+from rest_framework.permissions import IsAuthenticated
+from .models import UserFCMToken
+
+class SaveFCMTokenAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        token = request.data.get("token")
+
+        if not token:
+            return Response({"error": "Token required"}, status=400)
+
+        UserFCMToken.objects.update_or_create(
+            user=request.user,
+            defaults={"token": token}
+        )
+
+        return Response({"message": "Token saved"})
+
+
+
+
+
+
+from .utils import send_fcm_v1
+
+class TestNotificationAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tokens = UserFCMToken.objects.filter(user=request.user)
+
+        for t in tokens:
+            send_fcm_v1(
+                t.token,
+                "🔥 Test Alert",
+                "FCM V1 working successfully!"
+            )
+
+        return Response({"message": "Notification sent"})
+
+
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from .models import Device, Geofence
+
+class CreateGeofenceAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        # 🔥 GET DATA
+        device_id = request.data.get("device_id")
+        lat = request.data.get("lat")
+        lng = request.data.get("lng")
+        radius = request.data.get("radius")
+        notification_enabled = request.data.get("notification_enabled", True)
+
+        # 🔥 FIX BOOLEAN ISSUE (VERY IMPORTANT)
+        if str(notification_enabled).lower() == "false":
+            notification_enabled = False
+        else:
+            notification_enabled = True
+
+        print("📡 NOTIFICATION ENABLED =>", notification_enabled)
+
+        # 🔥 VALIDATION
+        if not device_id or not lat or not lng or not radius:
+            return Response({"error": "All fields required"}, status=400)
+
+        # 🔥 SAFE FLOAT CONVERSION
+        try:
+            lat = float(lat)
+            lng = float(lng)
+            radius = float(radius)
+        except Exception as e:
+            return Response({"error": "Invalid numeric values"}, status=400)
+
+        # 🔥 DEVICE CHECK
+        device = Device.objects.filter(
+            device_id=device_id,
+            user=request.user
+        ).first()
+
+        if not device:
+            return Response({"error": "Invalid device"}, status=400)
+
+        # 🔥 CREATE OR UPDATE GEOFENCE
+        geofence, created = Geofence.objects.update_or_create(
+            device=device,
+            defaults={
+                "latitude": lat,
+                "longitude": lng,
+                "radius": radius,
+                "is_active": True,
+                "notification_enabled": notification_enabled
+            }
+        )
+
+        return Response({
+            "message": "Geofence created" if created else "Geofence updated",
+            "device_id": device.device_id,
+            "lat": lat,
+            "lng": lng,
+            "radius": radius,
+            "notification_enabled": notification_enabled
+        })
+
+
+
+class GetGeofenceAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, device_id):
+
+        # 🔥 DEVICE CHECK
+        device = Device.objects.filter(
+            device_id=device_id,
+            user=request.user
+        ).first()
+
+        if not device:
+            return Response({"error": "Invalid device"}, status=400)
+
+        # 🔥 GET GEOFENCE
+        geofence = Geofence.objects.filter(device=device).first()
+
+        if not geofence:
+            return Response({
+                "message": "No geofence found",
+                "lat": None,
+                "lng": None,
+                "radius": None,
+                "notification_enabled": True
+            })
+
+        return Response({
+            "lat": geofence.latitude,
+            "lng": geofence.longitude,
+            "radius": geofence.radius,
+            "notification_enabled": geofence.notification_enabled
+        })
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from .models import Device, Geofence
+
+class ToggleGeofenceNotificationAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        device_id = request.data.get("device_id")
+        status = request.data.get("status")  # true / false
+
+        if device_id is None or status is None:
+            return Response({"error": "device_id and status required"}, status=400)
+
+        # 🔥 BOOLEAN FIX
+        if str(status).lower() == "false":
+            status = False
+        else:
+            status = True
+
+        device = Device.objects.filter(
+            device_id=device_id,
+            user=request.user
+        ).first()
+
+        if not device:
+            return Response({"error": "Invalid device"}, status=400)
+
+        geofence = Geofence.objects.filter(device=device).order_by('-id').first()
+
+        if not geofence:
+            return Response({"error": "Geofence not found"}, status=404)
+
+        geofence.notification_enabled = status
+        geofence.save()
+
+        return Response({
+            "message": "Notification updated",
+            "notification_enabled": geofence.notification_enabled
+        })
+
+
+
+
+
+
+import random
+from django.core.mail import send_mail
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from django.utils import timezone
+from datetime import timedelta
+
+from .models import AppPinOTP
+
+
+# 🔥 SEND OTP
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def app_pin_send_otp(request):
+
+    user = request.user
+
+    otp = str(random.randint(100000, 999999))
+
+    # पुराना delete
+    AppPinOTP.objects.filter(user=user).delete()
+
+    # नया save
+    AppPinOTP.objects.create(user=user, otp=otp)
+
+    # email send
+    send_mail(
+        subject="App PIN Reset OTP",
+        message=f"Your OTP is {otp}",
+        from_email="yourgmail@gmail.com",
+        recipient_list=[user.email],
+    )
+
+    return Response({"message": "OTP sent"})
+
+
+# 🔥 VERIFY OTP
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def app_pin_verify_otp(request):
+
+    user = request.user
+    otp = request.data.get("otp")
+
+    otp_obj = AppPinOTP.objects.filter(user=user, otp=otp).first()
+
+    if not otp_obj:
+        return Response({"error": "Invalid OTP"}, status=400)
+
+    # expiry check (2 min)
+    if timezone.now() - otp_obj.created_at > timedelta(minutes=2):
+        otp_obj.delete()
+        return Response({"error": "OTP expired"}, status=400)
+
+    otp_obj.delete()
+
+    return Response({"message": "OTP verified"})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# =====================================================
+# GET ALL ACTIVE PLANS
+# =====================================================
+
+@api_view(['GET'])
+def get_plans(request):
+
+    plans = SubscriptionPlan.objects.filter(
+        is_active=True
+    )
+
+    data = []
+
+    for p in plans:
+
+        data.append({
+
+            "id": p.id,
+
+            "name": p.name,
+
+            "price": p.price,
+
+            "duration_days": p.duration_days,
+        })
+
+    return Response(data)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# =====================================================
+# CREATE RAZORPAY ORDER
+# =====================================================
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_order(request):
+
+    plan_id = request.data.get("plan_id")
+
+    plan = SubscriptionPlan.objects.get(
+        id=plan_id
+    )
+
+    order = client.order.create({
+
+        "amount": int(plan.price) * 100,
+
+        "currency": "INR",
+
+        "payment_capture": 1
+    })
+
+    return Response({
+
+        "order_id": order["id"],
+
+        "amount": plan.price,
+
+        "plan_name": plan.name,
+
+        "razorpay_key":
+            settings.RAZORPAY_KEY_ID
+    })
+
+
+
+
+
+
+
+
+
+# =====================================================
+# PAYMENT SUCCESS
+# =====================================================
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def payment_success(request):
+
+    payment_id = request.data.get(
+        "payment_id"
+    )
+
+    plan_id = request.data.get(
+        "plan_id"
+    )
+
+    device_id = request.data.get(
+        "device_id"
+    )
+
+    # 🔥 GET PLAN
+
+    plan = SubscriptionPlan.objects.get(
+        id=plan_id
+    )
+
+    # 🔥 GET DEVICE
+
+    device = Device.objects.get(
+        device_id=device_id,
+        user=request.user
+    )
+
+    # 🔥 DEACTIVATE OLD SUBSCRIPTIONS
+
+    DeviceSubscription.objects.filter(
+        device=device,
+        is_active=True
+    ).update(is_active=False)
+
+    # 🔥 CREATE NEW SUBSCRIPTION
+
+    DeviceSubscription.objects.create(
+
+        user=request.user,
+
+        device=device,
+
+        plan=plan,
+
+        amount=plan.price,
+
+        start_date=timezone.now(),
+
+        end_date=timezone.now() +
+        timedelta(days=plan.duration_days),
+
+        is_active=True,
+
+        razorpay_payment_id=payment_id
+    )
+
+    return Response({
+
+        "message":
+            "Subscription Activated",
+
+        "device":
+            device.device_id,
+
+        "plan":
+            plan.name
+    })
+
+
+
+
+
+
+
+
+
+
+# =====================================================
+# DEVICE CURRENT SUBSCRIPTION
+# =====================================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def device_subscription(request, device_id):
+
+    try:
+
+        device = Device.objects.get(
+            device_id=device_id,
+            user=request.user
+        )
+
+    except Device.DoesNotExist:
+
+        return Response({
+            "error": "Device not found"
+        })
+
+    sub = DeviceSubscription.objects.filter(
+        device=device,
+        is_active=True
+    ).last()
+
+    # ❌ NO ACTIVE PLAN
+
+    if not sub:
+
+        return Response({
+            "active": False
+        })
+
+    # 🔥 REMAINING DAYS
+
+    remaining_days = (
+        sub.end_date - timezone.now()
+    ).days
+
+    # 🔥 EXPIRED CHECK
+
+    expired = remaining_days <= 0
+
+    return Response({
+
+        "active": True,
+
+        "device":
+            device.device_id,
+
+        "plan":
+            sub.plan.name,
+
+        "price":
+            sub.amount,
+
+        "start_date":
+            sub.start_date,
+
+        "end_date":
+            sub.end_date,
+
+        "remaining_days":
+            remaining_days,
+
+        "expired":
+            expired
+    })
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# =====================================================
+# DEVICE PAYMENT HISTORY
+# =====================================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payment_history(request, device_id):
+
+    try:
+
+        device = Device.objects.get(
+            device_id=device_id,
+            user=request.user
+        )
+
+    except Device.DoesNotExist:
+
+        return Response({
+            "error": "Device not found"
+        })
+
+    subscriptions = DeviceSubscription.objects.filter(
+        device=device
+    ).order_by('-id')
+
+    data = []
+
+    for sub in subscriptions:
+
+        data.append({
+
+            "plan":
+                sub.plan.name,
+
+            "amount":
+                sub.amount,
+
+            "start_date":
+                sub.start_date,
+
+            "end_date":
+                sub.end_date,
+
+            "active":
+                sub.is_active,
+
+            "payment_id":
+                sub.razorpay_payment_id
+        })
+
+    return Response(data)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from datetime import datetime
+
+# =========================================================
+# EXPIRY NOTIFICATION FUNCTION
+# =========================================================
+
+def send_expiry_notification(subscription):
+
+    try:
+
+        # =============================================
+        # GET ACTIVE SETTINGS
+        # =============================================
+
+        setting = ExpiryNotificationSetting.objects.filter(
+            is_active=True
+        ).first()
+
+        if not setting:
+
+            print("❌ NO ACTIVE SETTINGS FOUND")
+
+            return
+
+        # =============================================
+        # CALCULATE REMAINING DAYS
+        # =============================================
+
+        remaining_days = (
+            subscription.end_date.date()
+            - timezone.now().date()
+        ).days
+
+        print("REMAINING DAYS =>", remaining_days)
+
+        # =============================================
+        # CHECK DAYS LIMIT
+        # =============================================
+
+        if remaining_days > setting.notify_before_days:
+
+            print("❌ DAYS LIMIT NOT MATCHED")
+
+            return
+
+        # =============================================
+        # CURRENT TIME
+        # =============================================
+
+        now = timezone.localtime()
+
+        current_time = now.strftime("%H:%M")
+
+        print("CURRENT TIME =>", current_time)
+
+        # =============================================
+        # GET ALL ADMIN TIME SLOTS
+        # =============================================
+
+        allowed_times = []
+
+        for t in setting.times.all():
+
+            allowed_times.append(
+                t.time.strftime("%H:%M")
+            )
+
+        print("ALLOWED TIMES =>", allowed_times)
+
+        # =============================================
+        # TIME MATCH CHECK
+        # 10 MINUTE TOLERANCE
+        # =============================================
+
+        matched = False
+
+        for t in allowed_times:
+
+            slot_time = datetime.strptime(
+                t,
+                "%H:%M"
+            ).time()
+
+            current = now.time()
+
+            # =========================================
+            # 10 MINUTE TOLERANCE
+            # =========================================
+
+            if current.hour == slot_time.hour:
+
+                minute_diff = abs(
+                    current.minute
+                    - slot_time.minute
+                )
+
+                if minute_diff <= 10:
+
+                    matched = True
+
+                    break
+
+        if not matched:
+
+            print("❌ TIME NOT MATCHED")
+
+            return
+
+        print("✅ TIME MATCHED")
+
+        # =============================================
+        # PREVENT DUPLICATE SAME SLOT
+        # =============================================
+
+        if subscription.last_notification_sent:
+
+            last = timezone.localtime(
+                subscription.last_notification_sent
+            )
+
+            if (
+
+                last.date() == now.date()
+
+                and
+
+                last.hour == now.hour
+
+                and
+
+                abs(
+                    last.minute
+                    - now.minute
+                ) <= 10
+            ):
+
+                print(
+                    "⚠️ ALREADY SENT "
+                    "IN THIS SLOT"
+                )
+
+                return
+
+        # =============================================
+        # GET USER TOKENS
+        # =============================================
+
+        tokens = UserFCMToken.objects.filter(
+            user=subscription.user
+        )
+
+        print("TOKENS =>", tokens.count())
+
+        # =============================================
+        # SEND NOTIFICATION
+        # =============================================
+
+        for t in tokens:
+
+            try:
+
+                title = "⚠️ GPS Plan Expiring"
+
+                body = (
+                    f"{subscription.device.name} "
+                    f"expires in "
+                    f"{remaining_days} days."
+                )
+
+                send_fcm_v1(
+
+                    t.token,
+
+                    title,
+
+                    body
+                )
+
+                # =====================================
+                # SAVE SUCCESS LOG
+                # =====================================
+
+                ExpiryNotificationLog.objects.create(
+
+                    device=subscription.device,
+
+                    user=subscription.user,
+
+                    remaining_days=remaining_days,
+
+                    title=title,
+
+                    body=body,
+
+                    status="Delivered",
+
+                    response="Notification Sent Successfully"
+                )
+
+                print(
+                    "✅ NOTIFICATION SENT"
+                )
+
+            except Exception as e:
+
+                # =====================================
+                # SAVE FAILED LOG
+                # =====================================
+
+                ExpiryNotificationLog.objects.create(
+
+                    device=subscription.device,
+
+                    user=subscription.user,
+
+                    remaining_days=remaining_days,
+
+                    title="⚠️ GPS Plan Expiring",
+
+                    body=(
+                        f"{subscription.device.name} "
+                        f"expires in "
+                        f"{remaining_days} days."
+                    ),
+
+                    status="Failed",
+
+                    response=str(e)
+                )
+
+                print(
+                    "FCM ERROR:",
+                    str(e)
+                )
+
+        # =============================================
+        # SAVE LAST NOTIFICATION TIME
+        # =============================================
+
+        subscription.last_notification_sent = now
+
+        subscription.save()
+
+        print(
+            f"✅ Expiry Notification Sent "
+            f"for {subscription.device.device_id}"
+        )
+
+    except Exception as e:
+
+        print(
+            "EXPIRY NOTIFICATION ERROR:",
+            str(e)
+        )
+
+
+
+
+
+# here we add privacy policy , terms and conditions , refunds policy , shipping policy and contact us page views
+
+
+
+from django.shortcuts import render
+
+
+def privacy_policy(request):
+
+    return render(
+        request,
+        "legal/privacy_policy.html"
+    )
+
+
+def terms_conditions(request):
+
+    return render(
+        request,
+        "legal/terms_conditions.html"
+    )
+
+
+def refund_policy(request):
+
+    return render(
+        request,
+        "legal/refund_policy.html"
+    )
+
+
+def shipping_policy(request):
+
+    return render(
+        request,
+        "legal/shipping_policy.html"
+    )
+
+
+def contact_us(request):
+
+    return render(
+        request,
+        "legal/contact_us.html"
+    )
